@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>俄罗斯方块（部署专用版）</title>
+    <style>
+        body { 
+            margin: 0; padding: 20px; 
+            background: #f0f0f0; font-family: Arial, sans-serif; 
+            text-align: center; touch-action: manipulation;
+        }
+        /* 关键修改：给面板设固定宽度（10个格子+9个间隙：30*10 +1*9=309px） */
+        #game-board { 
+            display: grid; grid-template: repeat(20,30px)/repeat(10,30px); 
+            gap: 1px; background: #333; padding: 1px; 
+            margin: 0 auto; border-radius: 4px;
+            width: 309px !important; /* 强制固定宽度，避免浏览器计算偏差 */
+        }
+        .cell { width: 30px; height: 30px; background: #fff; border-radius: 2px; }
+        #score { margin: 15px 0; font-size: 20px; font-weight: bold; }
+        #start-btn { 
+            padding: 12px 24px; font-size: 18px; 
+            background: #2196F3; color: #fff; border: none; 
+            border-radius: 6px; cursor: pointer; margin-bottom: 15px;
+        }
+        #touch-controls { 
+            display: grid; grid-template: repeat(2,80px)/repeat(3,80px); 
+            gap: 10px; margin: 20px auto; width: 260px;
+        }
+        .touch-btn { 
+            font-size: 24px; background: #FF9800; color: #fff; 
+            border: none; border-radius: 10px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .touch-btn:active { background: #F57C00; transform: scale(0.95); }
+    </style>
+</head>
+<body>
+    <h1>俄罗斯方块</h1>
+    <div id="score">得分: 0</div>
+    <button id="start-btn">开始游戏</button>
+    <div id="game-board"></div>
+    <div id="touch-controls">
+        <button class="touch-btn" id="rotate-btn">↺</button>
+        <button class="touch-btn" id="left-btn">←</button>
+        <button class="touch-btn" id="down-btn">↓</button>
+        <button class="touch-btn" id="right-btn">→</button>
+    </div>
+
+    <script>
+        // 兼容部署环境的变量定义
+        var COLS = 10, ROWS = 20;
+        var board = [];
+        var currTet, currX, currY, score = 0, gameInt, currColor, currRotateIdx = 0;
+
+        // 完整7种方块形状（经典规则）
+        var TETS = [
+            {
+                name: 'I',
+                states: [[[1,1,1,1]], [[1],[1],[1],[1]], [[1,1,1,1]], [[1],[1],[1],[1]]],
+                color: '#2196F3'
+            },
+            {
+                name: 'O',
+                states: [[[1,1],[1,1]], [[1,1],[1,1]], [[1,1],[1,1]], [[1,1],[1,1]]],
+                color: '#FFEB3B'
+            },
+            {
+                name: 'T',
+                states: [[[0,1,0],[1,1,1]], [[1,0],[1,1],[1,0]], [[0,1,0],[1,1,1]], [[0,1],[1,1],[0,1]]],
+                color: '#9C27B0'
+            },
+            {
+                name: 'L',
+                states: [[[0,0,1],[1,1,1]], [[1,0],[1,0],[1,1]], [[1,1,1],[1,0,0]], [[1,1],[0,1],[0,1]]],
+                color: '#FF9800'
+            },
+            {
+                name: 'J',
+                states: [[[1,0,0],[1,1,1]], [[1,1],[1,0],[1,0]], [[1,1,1],[0,0,1]], [[0,1],[0,1],[1,1]]],
+                color: '#00BCD4'
+            },
+            {
+                name: 'S',
+                states: [[[0,1,1],[1,1,0]], [[1,0],[1,1],[0,1]], [[0,1,1],[1,1,0]], [[1,0],[1,1],[0,1]]],
+                color: '#4CAF50'
+            },
+            {
+                name: 'Z',
+                states: [[[1,1,0],[0,1,1]], [[0,1],[1,1],[1,0]], [[1,1,0],[0,1,1]], [[0,1],[1,1],[1,0]]],
+                color: '#F44336'
+            }
+        ];
+
+        // 页面加载完成后初始化（适配部署环境）
+        window.onload = function() {
+            // 初始化面板
+            var boardEl = document.getElementById('game-board');
+            for (var y=0; y<ROWS; y++) {
+                board[y] = [];
+                for (var x=0; x<COLS; x++) {
+                    board[y][x] = '';
+                    var cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.id = 'c' + x + y;
+                    boardEl.appendChild(cell);
+                }
+            }
+
+            // 绑定开始按钮
+            document.getElementById('start-btn').onclick = startGame;
+        };
+
+        // 生成新方块
+        function newTet() {
+            var randomIdx = Math.floor(Math.random() * TETS.length);
+            var randomTet = TETS[randomIdx];
+            currRotateIdx = 0;
+            currTet = randomTet.states[currRotateIdx];
+            currColor = randomTet.color;
+            currX = Math.floor(COLS/2) - Math.floor(currTet[0].length/2);
+            currY = 0;
+            drawAll();
+        }
+
+        // 全面板重绘
+        function drawAll() {
+            // 清空面板
+            for (var y=0; y<ROWS; y++) {
+                for (var x=0; x<COLS; x++) {
+                    var cell = document.getElementById('c' + x + y);
+                    cell.style.backgroundColor = board[y][x] || '#fff';
+                }
+            }
+            // 绘制当前方块
+            for (var ty=0; ty<currTet.length; ty++) {
+                for (var tx=0; tx<currTet[ty].length; tx++) {
+                    if (currTet[ty][tx]) {
+                        var x = currX + tx;
+                        var y = currY + ty;
+                        var cell = document.getElementById('c' + x + y);
+                        cell.style.backgroundColor = currColor;
+                    }
+                }
+            }
+        }
+
+        // 核心功能函数
+        function canMoveDown() {
+            for (var ty=0; ty<currTet.length; ty++) {
+                for (var tx=0; tx<currTet[ty].length; tx++) {
+                    if (currTet[ty][tx]) {
+                        var checkY = currY + ty + 1;
+                        if (checkY >= ROWS || (checkY >=0 && board[checkY][currX + tx])) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        function lockTet() {
+            for (var ty=0; ty<currTet.length; ty++) {
+                for (var tx=0; tx<currTet[ty].length; tx++) {
+                    if (currTet[ty][tx]) {
+                        board[currY + ty][currX + tx] = currColor;
+                    }
+                }
+            }
+            // 消行
+            var linesCleared = 0;
+            for (var y=ROWS-1; y>=0; y--) {
+                var isFull = true;
+                for (var x=0; x<COLS; x++) {
+                    if (!board[y][x]) {
+                        isFull = false;
+                        break;
+                    }
+                }
+                if (isFull) {
+                    board.splice(y, 1);
+                    board.unshift(Array(COLS).fill(''));
+                    y++;
+                    linesCleared++;
+                }
+            }
+            if (linesCleared) {
+                score += linesCleared * 100;
+                document.getElementById('score').textContent = '得分: ' + score;
+            }
+            newTet();
+        }
+
+        function moveLeft() {
+            if (currX > 0 && !isBlocked(-1, 0)) {
+                currX--;
+                drawAll();
+            }
+        }
+
+        function moveRight() {
+            if (currX < COLS - currTet[0].length && !isBlocked(1, 0)) {
+                currX++;
+                drawAll();
+            }
+        }
+
+        function moveDown() {
+            if (canMoveDown()) {
+                currY++;
+            } else {
+                lockTet();
+            }
+            drawAll();
+        }
+
+        function rotateTet() {
+            var currTetStates = TETS.find(function(t) {
+                return t.states.includes(currTet);
+            }).states;
+            currRotateIdx = (currRotateIdx + 1) % 4;
+            var newTet = currTetStates[currRotateIdx];
+            var oldTet = currTet;
+            currTet = newTet;
+            if (isBlocked(0, 0)) {
+                currTet = oldTet;
+                currRotateIdx = (currRotateIdx - 1 + 4) % 4;
+            }
+            drawAll();
+        }
+
+        function isBlocked(dx, dy) {
+            for (var ty=0; ty<currTet.length; ty++) {
+                for (var tx=0; tx<currTet[ty].length; tx++) {
+                    if (currTet[ty][tx]) {
+                        var newX = currX + tx + dx;
+                        var newY = currY + ty + dy;
+                        if (newX < 0 || newX >= COLS || newY >= ROWS || (newY >=0 && board[newY][newX])) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        // 开始游戏
+        function startGame() {
+            document.getElementById('start-btn').style.display = 'none';
+            // 绑定控制按钮
+            document.getElementById('rotate-btn').onclick = rotateTet;
+            document.getElementById('left-btn').onclick = moveLeft;
+            document.getElementById('right-btn').onclick = moveRight;
+            document.getElementById('down-btn').onclick = moveDown;
+            // 键盘控制
+            document.onkeydown = function(e) {
+                switch(e.key) {
+                    case 'ArrowLeft': moveLeft(); break;
+                    case 'ArrowRight': moveRight(); break;
+                    case 'ArrowDown': moveDown(); break;
+                    case 'ArrowUp': rotateTet(); break;
+                }
+            };
+            // 启动游戏
+            newTet();
+            gameInt = setInterval(moveDown, 1000);
+        }
+    </script>
+</body>
+</html>
